@@ -158,7 +158,7 @@ async fn time_to_pay_electricity(bot: AutoSend<Bot>) -> TeloxideHandleResult {
             bot.send_message(
                 ChatId(chat_id),
                 format!(
-                    "{} 的电费小于 {} 啦！，目前余额为： {}，快充值！！！",
+                    "{} 的电费小于 {} 啦！目前余额为： {}，快充值！！！",
                     format_args!("{} {}", i.address, i.room),
                     warn,
                     i.smart_balance
