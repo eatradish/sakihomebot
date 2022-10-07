@@ -49,7 +49,6 @@ async fn main() {
     dotenv::dotenv().ok();
     let bot = Bot::from_env().auto_send();
 
-    // teloxide::commands_repl(bot, answer, Command::ty()).await;
     Dispatcher::builder(
         bot,
         Update::filter_message()
@@ -64,7 +63,6 @@ async fn main() {
 }
 
 async fn answer(bot: AutoSend<Bot>, message: Message, command: Command) -> TeloxideHandleResult {
-    // let tenid = &*TENID.lock().unwrap();
     match command {
         Command::DianFei => {
             bot_get_electricity(bot, message.chat.id).await?;
