@@ -150,7 +150,7 @@ async fn time_to_pay_electricity(bot: AutoSend<Bot>) -> TeloxideHandleResult {
     };
 
     let warn = std::env::var("WARN_DIANFEI")
-        .unwrap_or("30".to_string())
+        .unwrap_or_else(|_| "30".to_string())
         .parse::<f32>()?;
 
     for i in es {
@@ -159,7 +159,7 @@ async fn time_to_pay_electricity(bot: AutoSend<Bot>) -> TeloxideHandleResult {
                 ChatId(chat_id),
                 format!(
                     "{} 的电费小于 {} 啦！，目前余额为： {}，快充值！！！",
-                    format!("{} {}", i.address, i.room),
+                    format_args!("{} {}", i.address, i.room),
                     warn,
                     i.smart_balance
                 ),
