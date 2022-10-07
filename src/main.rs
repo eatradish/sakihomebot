@@ -11,7 +11,7 @@ use teloxide::{
     prelude::AutoSend,
     prelude::Dispatcher,
     requests::{Requester, RequesterExt},
-    types::{Message, ParseMode, Recipient, Update, UserId},
+    types::{ChatId, Message, ParseMode, Recipient, Update},
     utils::command::BotCommands,
     Bot,
 };
@@ -54,7 +54,8 @@ async fn main() {
         bot,
         Update::filter_message()
             .branch(dptree::entry().filter_command::<Command>().endpoint(answer))
-            .branch(dptree::entry().endpoint(time_to_get_electricity)),
+            .branch(dptree::entry().endpoint(time_to_get_electricity))
+            .branch(dptree::entry().endpoint(time_to_pay_electricity)),
     )
     .enable_ctrlc_handler()
     .build()
@@ -77,8 +78,7 @@ async fn bot_get_electricity<C: Into<Recipient> + Copy>(
     bot: AutoSend<Bot>,
     chat_id: C,
 ) -> TeloxideHandleResult {
-    let tenid = std::env::var("TENID").expect("Can not get tenid");
-    let electricitys = get_electricity(&tenid).await?;
+    let electricitys = get_electricity().await?;
 
     for i in electricitys {
         bot.send_message(
@@ -92,7 +92,8 @@ async fn bot_get_electricity<C: Into<Recipient> + Copy>(
     Ok(())
 }
 
-async fn get_electricity(tenid: &str) -> Result<Vec<TangChaoElectricityResult>> {
+async fn get_electricity() -> Result<Vec<TangChaoElectricityResult>> {
+    let tenid = std::env::var("TENID").expect("Can not get tenid");
     let client = Client::new();
     let mut headers = HeaderMap::new();
     headers.insert("User-Agent", "Mozilla/5.0 (iPhone; CPU iPhone OS 6_1_3 like Mac OS X) AppleWebKit/536.26 (KHTML, like Gecko) Mobile/10B329 MicroMessenger/5.0.1".parse()?);
@@ -129,13 +130,44 @@ async fn time_to_get_electricity(bot: AutoSend<Bot>) -> TeloxideHandleResult {
     };
 
     let chat_id = if let Ok(chat_id) = std::env::var("CHAT_ID") {
-        chat_id.parse::<u64>()?
+        chat_id.parse::<i64>()?
     } else {
         return Ok(());
     };
 
     if hour == set_hour {
-        bot_get_electricity(bot, UserId(chat_id)).await?;
+        bot_get_electricity(bot, ChatId(chat_id)).await?;
+    }
+
+    Ok(())
+}
+
+async fn time_to_pay_electricity(bot: AutoSend<Bot>) -> TeloxideHandleResult {
+    let es = get_electricity().await?;
+
+    let chat_id = if let Ok(chat_id) = std::env::var("CHAT_ID") {
+        chat_id.parse::<i64>()?
+    } else {
+        return Ok(());
+    };
+
+    let warn = std::env::var("WARN_DIANFEI")
+        .unwrap_or("30".to_string())
+        .parse::<f32>()?;
+
+    for i in es {
+        if i.smart_balance < warn {
+            bot.send_message(
+                ChatId(chat_id),
+                format!(
+                    "{} 的电费小于 {} 啦！，目前余额为： {}，快充值！！！",
+                    format!("{} {}", i.address, i.room),
+                    warn,
+                    i.smart_balance
+                ),
+            )
+            .await?;
+        }
     }
 
     Ok(())
