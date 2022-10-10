@@ -1,21 +1,17 @@
-use std::error::Error;
-
 use anyhow::Result;
-use log::info;
+use log::{error, info};
 use reqwest::{header::HeaderMap, Client};
 use serde::Deserialize;
 use teloxide::{
-    dispatching::{HandlerExt, UpdateFilterExt},
-    dptree,
     payloads::SendMessageSetters,
-    prelude::AutoSend,
-    prelude::Dispatcher,
+    prelude::*,
     requests::{Requester, RequesterExt},
-    types::{ChatId, Message, ParseMode, Recipient, Update},
+    types::{ChatId, Message, ParseMode, Recipient},
     utils::command::BotCommands,
     Bot,
 };
-use time::{macros::offset, OffsetDateTime};
+
+use tokio_cron_scheduler::{Job, JobScheduler};
 
 #[derive(Deserialize, Debug)]
 struct TangChaoElectricity {
@@ -32,6 +28,14 @@ struct TangChaoElectricityResult {
     smart_balance: f32,
 }
 
+#[derive(Clone)]
+struct SakiHomeBotConfig {
+    tenid: String,
+    set_hour: u8,
+    admin_chat_id: i64,
+    warn_dianfei: f32,
+}
+
 #[derive(BotCommands, Clone)]
 #[command(rename = "lowercase", description = "These commands are supported:")]
 enum Command {
@@ -39,33 +43,80 @@ enum Command {
     DianFei,
 }
 
-type TeloxideHandleResult = Result<(), Box<dyn Error + Send + Sync>>;
-
 #[tokio::main]
 async fn main() {
     tracing_subscriber::fmt::init();
     info!("Starting saki home bot...");
 
+    let sched = JobScheduler::new().await.unwrap();
+
     dotenv::dotenv().ok();
     let bot = Bot::from_env().auto_send();
 
-    Dispatcher::builder(
-        bot,
-        Update::filter_message()
-            .branch(dptree::entry().filter_command::<Command>().endpoint(answer))
-            .branch(dptree::entry().endpoint(time_to_get_electricity))
-            .branch(dptree::entry().endpoint(time_to_pay_electricity)),
+    let config = SakiHomeBotConfig {
+        tenid: std::env::var("TENID").expect("Can not get TENID in var"),
+        set_hour: std::env::var("HOUR")
+            .unwrap_or("7".to_string())
+            .parse()
+            .unwrap(),
+        admin_chat_id: std::env::var("CHAT_ID")
+            .expect("Can not get CHAT_ID in var")
+            .parse()
+            .unwrap(),
+        warn_dianfei: std::env::var("WARN_DIANFEI")
+            .unwrap_or("30".to_string())
+            .parse()
+            .unwrap(),
+    };
+
+    let bot_clone = bot.clone();
+    let config_clone = config.clone();
+
+    sched
+        .add(
+            Job::new_async(
+                format!("0 {} * * *", config.set_hour).as_str(),
+                move |_, _| {
+                    let bot_clone = bot_clone.clone();
+                    let config_clone = config_clone.clone();
+                    Box::pin(async move {
+                        if let Err(e) = time_to_get_electricity_inner(config_clone, bot_clone).await
+                        {
+                            error!("{}", e);
+                        }
+                    })
+                },
+            )
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    tokio::try_join!(
+        async {
+            teloxide::commands_repl(bot.clone(), answer, Command::ty()).await;
+
+            Ok(())
+        },
+        async {
+            sched.start().await?;
+
+            Ok(())
+        },
+        time_to_pay_electricity(config.clone(), bot.clone()),
     )
-    .enable_ctrlc_handler()
-    .build()
-    .dispatch()
-    .await;
+    .unwrap();
 }
 
-async fn answer(bot: AutoSend<Bot>, message: Message, command: Command) -> TeloxideHandleResult {
+async fn answer(
+    bot: AutoSend<Bot>,
+    message: Message,
+    command: Command,
+    config: SakiHomeBotConfig,
+) -> Result<()> {
     match command {
         Command::DianFei => {
-            bot_get_electricity(bot, message.chat.id).await?;
+            bot_get_electricity(config, bot, message.chat.id).await?;
         }
     }
 
@@ -73,10 +124,11 @@ async fn answer(bot: AutoSend<Bot>, message: Message, command: Command) -> Telox
 }
 
 async fn bot_get_electricity<C: Into<Recipient> + Copy>(
+    config: SakiHomeBotConfig,
     bot: AutoSend<Bot>,
     chat_id: C,
-) -> TeloxideHandleResult {
-    let electricitys = get_electricity().await?;
+) -> Result<()> {
+    let electricitys = get_electricity(&config.tenid).await?;
 
     for i in electricitys {
         bot.send_message(
@@ -90,8 +142,7 @@ async fn bot_get_electricity<C: Into<Recipient> + Copy>(
     Ok(())
 }
 
-async fn get_electricity() -> Result<Vec<TangChaoElectricityResult>> {
-    let tenid = std::env::var("TENID").expect("Can not get tenid");
+async fn get_electricity(tenid: &str) -> Result<Vec<TangChaoElectricityResult>> {
     let client = Client::new();
     let mut headers = HeaderMap::new();
     headers.insert("User-Agent", "Mozilla/5.0 (iPhone; CPU iPhone OS 6_1_3 like Mac OS X) AppleWebKit/536.26 (KHTML, like Gecko) Mobile/10B329 MicroMessenger/5.0.1".parse()?);
@@ -117,46 +168,25 @@ async fn get_electricity() -> Result<Vec<TangChaoElectricityResult>> {
     Ok(res)
 }
 
-async fn time_to_get_electricity(bot: AutoSend<Bot>) -> TeloxideHandleResult {
-    let time = OffsetDateTime::now_utc().to_offset(offset!(+8));
-    let hour = time.hour();
-
-    let set_hour = if let Ok(h) = std::env::var("HOUR") {
-        h.parse::<u8>()?
-    } else {
-        return Ok(());
-    };
-
-    let chat_id = if let Ok(chat_id) = std::env::var("CHAT_ID") {
-        chat_id.parse::<i64>()?
-    } else {
-        return Ok(());
-    };
-
-    if hour == set_hour {
-        bot_get_electricity(bot, ChatId(chat_id)).await?;
-    }
+async fn time_to_get_electricity_inner(
+    config: SakiHomeBotConfig,
+    bot: AutoSend<Bot>,
+) -> Result<()> {
+    let chat_id = config.admin_chat_id;
+    bot_get_electricity(config, bot, ChatId(chat_id)).await?;
 
     Ok(())
 }
 
-async fn time_to_pay_electricity(bot: AutoSend<Bot>) -> TeloxideHandleResult {
-    let es = get_electricity().await?;
+async fn time_to_pay_electricity(config: SakiHomeBotConfig, bot: AutoSend<Bot>) -> Result<()> {
+    let es = get_electricity(&config.tenid).await?;
 
-    let chat_id = if let Ok(chat_id) = std::env::var("CHAT_ID") {
-        chat_id.parse::<i64>()?
-    } else {
-        return Ok(());
-    };
-
-    let warn = std::env::var("WARN_DIANFEI")
-        .unwrap_or_else(|_| "30".to_string())
-        .parse::<f32>()?;
+    let warn = config.warn_dianfei;
 
     for i in es {
         if i.smart_balance < warn {
             bot.send_message(
-                ChatId(chat_id),
+                ChatId(config.admin_chat_id),
                 format!(
                     "{} 的电费小于 {} 啦！目前余额为： {}，快充值！！！",
                     format_args!("{} {}", i.address, i.room),
