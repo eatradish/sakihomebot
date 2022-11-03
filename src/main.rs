@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use anyhow::Result;
-use log::info;
+use log::{info, error};
 use reqwest::{header::HeaderMap, Client};
 use serde::Deserialize;
 use teloxide::{
@@ -64,7 +64,7 @@ async fn main() {
 
     info!("Set electricity bill < {} to send warn", warn_dianfei);
 
-    tokio::select! {
+    while let Err(e) = tokio::select! {
         v = async {
             teloxide::commands_repl(bot.clone(), answer, Command::ty()).await;
 
@@ -72,8 +72,10 @@ async fn main() {
         } => v,
         v = time_to_pay_electricity(chat_id, bot.clone(), warn_dianfei) => v,
         v = time_to_get_electricity(chat_id, bot.clone(), set_hour) => v,
+    } {
+        error!("{}", e);
+        tokio::time::sleep(Duration::from_secs(60)).await;
     }
-    .unwrap();
 
     // tokio::select!(
     //     v = {
