@@ -20,18 +20,14 @@ struct TangChaoElectricity {
 
 #[derive(Deserialize, Debug)]
 struct TangChaoElectricityResult {
-    #[serde(rename = "Address")]
-    address: String,
-    #[serde(rename = "Room")]
-    room: String,
-    #[serde(rename = "SmartBalance")]
+    #[serde(rename = "eleSmartMoney")]
     smart_balance: f32,
 }
 
 #[derive(BotCommands, Clone)]
-#[command(rename = "lowercase", description = "These commands are supported:")]
+#[command(description = "These commands are supported:")]
 enum Command {
-    #[command(description = "Get Electricity.")]
+    #[command(description = "Get Electricity.", rename = "dianfei")]
     DianFei,
 }
 
@@ -115,7 +111,7 @@ async fn bot_get_electricity<C: Into<Recipient> + Copy>(
     for i in electricitys {
         bot.send_message(
             chat_id,
-            format!("<b>{} {}</b>\n{}", i.address, i.room, i.smart_balance),
+            format!("{}", i.smart_balance),
         )
         .parse_mode(ParseMode::Html)
         .await?;
@@ -130,13 +126,13 @@ async fn get_electricity() -> Result<Vec<TangChaoElectricityResult>> {
     let mut headers = HeaderMap::new();
     headers.insert("User-Agent", "Mozilla/5.0 (iPhone; CPU iPhone OS 6_1_3 like Mac OS X) AppleWebKit/536.26 (KHTML, like Gecko) Mobile/10B329 MicroMessenger/5.0.1".parse()?);
     headers.insert("Accept", "application/json, text/plain, */*".parse()?);
-    headers.insert("Origin", "http://www.4006269069.net".parse()?);
-    headers.insert("Referer", "http://www.4006269069.net".parse()?);
+    headers.insert("Origin", "http://wx.tcnest.cn".parse()?);
+    headers.insert("Referer", "http://wx.tcnest.cn".parse()?);
     headers.insert("Accept-Encoding", "gzip, deflate".parse()?);
     headers.insert("Accept-Language", "en-US,en;q=0.5".parse()?);
     headers.insert("Head-User-Id", "".parse()?);
 
-    let url = format!("http://api.4006269069.net/wechat/tenant/rentadviser/RdWxPact/getRdInteDeviceHouConList?TenId={}", tenid);
+    let url = format!("http://api.tcnest.cn/tenants/tenantContract/listSmartByContractId?contractId={}", tenid);
 
     let res = client
         .get(url)
@@ -169,8 +165,7 @@ async fn time_to_pay_electricity(chat_id: i64, bot: AutoSend<Bot>, warn: f32) ->
                 bot.send_message(
                     ChatId(chat_id),
                     format!(
-                        "{} 的电费小于 {} 啦！目前余额为：{}，快充值！！！",
-                        format_args!("{} {}", i.address, i.room),
+                        "电费小于 {} 啦！目前余额为：{}，快充值！！！",
                         warn,
                         i.smart_balance
                     ),
